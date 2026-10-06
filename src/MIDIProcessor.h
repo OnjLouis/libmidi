@@ -37,6 +37,7 @@ const processor_options_t DefaultOptions(0, false, false, true, false, false, tr
 
 class processor_t
 {
+    friend struct processor_test_access;
 public:
     static bool Process(std::vector<uint8_t> const & data, const wchar_t * filePath, container_t & container, const processor_options_t & options = DefaultOptions);
 

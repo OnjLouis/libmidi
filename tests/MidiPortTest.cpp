@@ -1,12 +1,20 @@
 #include "pch.h"
 #include "Exception.h"
 #include "IFF.h"
-// Exercise the SMF parser directly without pulling unrelated format decoders
-// into this standalone regression target or widening the production API.
-#define private public
 #include "MIDIProcessor.h"
-#undef private
 #include <set>
+
+namespace midi
+{
+// Call the private SMF parser without changing its access or MSVC symbol name.
+struct processor_test_access
+{
+    static bool Parse(const std::vector<uint8_t> & file, container_t & container)
+    {
+        return processor_t::ProcessSMF(file, container);
+    }
+};
+}
 
 namespace
 {
@@ -30,7 +38,7 @@ bytes_t MakeSMF(const std::vector<bytes_t> & tracks)
 std::vector<midi::message_t> Parse(const bytes_t & file, midi::container_t & container,
     midi::sysex_table_t & table, std::vector<uint8_t> & ports)
 {
-    Require(midi::processor_t::ProcessSMF(file, container), "SMF parsing failed");
+    Require(midi::processor_test_access::Parse(file, container), "SMF parsing failed");
     std::vector<midi::message_t> stream;
     uint32_t begin, end;
     container.SerializeAsStream(0, stream, table, ports, begin, end, 0);
