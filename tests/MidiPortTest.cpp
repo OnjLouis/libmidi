@@ -135,6 +135,43 @@ void TestRolandLayout(int variant = 0)
     bytes_t roundtrip; container.SerializeAsSMF(roundtrip);
     Require(roundtrip == file, "Inferred ports were written into the original MIDI");
 }
+void TestRolandPrefixLayout(int variant)
+{
+    std::vector<bytes_t> tracks{{0,0xF0,10,0x41,0x10,0x42,0x12,0x40,0,0x7F,0,0x41,0xF7,0,0xFF,0x2F,0}};
+    if (variant == 1) tracks[0] = {0,0xFF,0x2F,0};
+    if (variant == 6) tracks[0][11] = 0x42;
+    if (variant == 7) tracks[0].insert(tracks[0].begin(), {0,0xFF,9,1,'A'});
+    for (unsigned part : {0U, 1U, 9U, 16U, 18U, 25U})
+    {
+        const auto channel = static_cast<uint8_t>(part % 16);
+        std::string name = std::string(1, part < 16 ? 'A' : 'B') +
+            (channel < 9 ? "0" : "") + std::to_string(channel + 1) + "-Instrument";
+        if (variant == 2 && part == 18) name = "B04-Instrument";
+        if (variant == 3 && part == 18) name = "B01-Instrument";
+        if (variant == 4 && part >= 16) name[0] = 'A';
+        bytes_t track;
+        if (variant == 5 && part == 18) track.insert(track.end(), {0,0xFF,0x21,1,0});
+        track.insert(track.end(), {0,0xFF,3,static_cast<uint8_t>(name.size())});
+        track.insert(track.end(), name.begin(), name.end());
+        track.insert(track.end(), {0,static_cast<uint8_t>(0xC0|channel),30,
+            0,static_cast<uint8_t>(0x90|channel),60,100,1,60,0,0,0xFF,0x2F,0});
+        if (variant == 8 && part == 18)
+            track.insert(track.end() - 4, {0,0x93,62,100});
+        tracks.push_back(track);
+    }
+    const auto file = MakeSMF(tracks);
+    midi::container_t container; midi::sysex_table_t table; std::vector<uint8_t> ports;
+    const auto stream = Parse(file, container, table, ports);
+    for (size_t i = 1; i < tracks.size(); ++i)
+        Require(container.GetTracks()[i].GetInitialPort() == (variant == 0 && i > 3 ? 1 : 0),
+            "Roland A01/B01 prefix routing or rejection is incorrect");
+    Require(ports.size() == (variant == 0 ? 2 : 1), "Roland prefix port list wrong");
+    bytes_t roundtrip; container.SerializeAsSMF(roundtrip);
+    Require(roundtrip == file, "Prefix inference changed the SMF");
+    midi::track_t copy(container.GetTracks()[4]);
+    midi::track_t assigned; assigned = copy;
+    Require(assigned.GetInitialPort() == (variant == 0 ? 1 : 0), "Copied prefix routing was lost");
+}
 }
 
 int main(int argc, char ** argv)
@@ -161,6 +198,7 @@ int main(int argc, char ** argv)
         }
         TestPorts(true); TestPorts(false); TestChangesAndSysEx(); TestUnrelatedMetadata();
         for (int variant = 0; variant < 6; ++variant) TestRolandLayout(variant);
+        for (int variant = 0; variant < 9; ++variant) TestRolandPrefixLayout(variant);
         std::cout << "MIDI port regression tests passed\n";
         return 0;
     }

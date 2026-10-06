@@ -361,50 +361,90 @@ void container_t::AddTrack(const track_t & track)
 
 void container_t::InferRolandPortLayout()
 {
-    // The original SC-88 demos omit port metadata, but label a complete A/B layout.
-    // Require the whole layout and a GS reset rather than guessing from track count.
-    if (_Format != 1 || _Tracks.size() != 33)
+    // Some official Roland demos label their A/B parts without port metadata.
+    // Validate every labelled channel and the GS setup, never just the track count.
+    if (_Format != 1 || _Tracks.size() < 3)
         return;
 
     bool HasGSReset = false;
-    const std::vector<uint8_t> GSReset{0xF0,0x41,0x10,0x42,0x12,0,0,0x7F,0,1,0xF7};
+    std::vector<std::string> Names(_Tracks.size());
+    std::vector<uint16_t> Channels(_Tracks.size(), 0);
     for (size_t i = 0; i < _Tracks.size(); ++i)
     {
         const auto & Track = _Tracks[i];
         if (Track.IsPortSet()) return;
         bool HasName = false;
-        const auto ExpectedName = i == 0 ? std::string() :
-            "Part" + std::string(1, i <= 16 ? 'A' : 'B') + " " + std::to_string((i - 1) % 16 + 1) + "ch.";
         for (const auto & Event : Track)
         {
             if (Event.Type != event_t::Extended)
             {
-                if (i == 0 || Event.ChannelNumber != (i - 1) % 16) return;
+                Channels[i] |= static_cast<uint16_t>(1U << Event.ChannelNumber);
                 continue;
             }
-            if (Event.Data == GSReset) HasGSReset = true;
+            const auto & Data = Event.Data;
+            if (Data.size() == 11 && Data[0] == 0xF0 && Data[1] == 0x41 && Data[2] < 0x80 &&
+                Data[3] == 0x42 && Data[4] == 0x12 && (Data[5] == 0 || Data[5] == 0x40) &&
+                Data[6] == 0 && Data[7] == 0x7F && Data[8] == 0 && Data[9] < 0x80 && Data[10] == 0xF7 &&
+                ((Data[5] + Data[7] + Data[9]) & 0x7F) == 0)
+                HasGSReset = true;
             if (Event.Data.size() < 2 || Event.Data[0] != StatusCode::MetaData) continue;
             if (Event.Data[1] == MetaDataType::InstrumentName || Event.Data[1] == MetaDataType::DeviceName) return;
-            if (i != 0 && Event.Data[1] == MetaDataType::TrackName)
+            if (Event.Data[1] == MetaDataType::TrackName)
             {
-                if (HasName || std::string(Event.Data.begin() + 2, Event.Data.end()) != ExpectedName) return;
+                if (HasName) return;
+                Names[i].assign(Event.Data.begin() + 2, Event.Data.end());
                 HasName = true;
             }
         }
-        if (i != 0 && !HasName) return;
     }
     if (!HasGSReset) return;
+
+    bool CompleteLayout = _Tracks.size() == 33 && Channels[0] == 0;
+    std::vector<uint8_t> InitialPorts(_Tracks.size(), 0);
+    for (size_t i = 1; CompleteLayout && i < _Tracks.size(); ++i)
+    {
+        const auto ExpectedName = "Part" + std::string(1, i <= 16 ? 'A' : 'B') + " " +
+            std::to_string((i - 1) % 16 + 1) + "ch.";
+        CompleteLayout = Names[i] == ExpectedName &&
+            (Channels[i] == 0 || Channels[i] == (1U << ((i - 1) % 16)));
+        InitialPorts[i] = i <= 16 ? 0 : 1;
+    }
+    if (!CompleteLayout)
+    {
+        // SC-8820 labels may omit unused parts: A01-Piccolo, B03-EnglishHr, etc.
+        uint16_t Seen[2] = {0, 0};
+        for (size_t i = 0; i < _Tracks.size(); ++i)
+        {
+            InitialPorts[i] = 0;
+            const auto & Name = Names[i];
+            const bool HasPrefix = Name.size() >= 5 && (Name[0] == 'A' || Name[0] == 'B') &&
+                Name[1] >= '0' && Name[1] <= '1' && Name[2] >= '0' && Name[2] <= '9' && Name[3] == '-';
+            if (!HasPrefix)
+            {
+                if (Channels[i] != 0) return;
+                continue;
+            }
+            const auto Part = static_cast<unsigned>((Name[1] - '0') * 10 + Name[2] - '0');
+            if (Part == 0 || Part > 16) return;
+            const uint16_t Channel = static_cast<uint16_t>(1U << (Part - 1));
+            const auto Port = static_cast<uint8_t>(Name[0] - 'A');
+            if ((Seen[Port] & Channel) || (Channels[i] != 0 && Channels[i] != Channel)) return;
+            Seen[Port] |= Channel;
+            InitialPorts[i] = Port;
+        }
+        if (Seen[0] == 0 || Seen[1] == 0) return;
+    }
 
     uint8_t PortB = 1;
     NormalizePortNumber(PortB);
     _ChannelMask[0] = 0;
-    for (size_t i = 1; i < _Tracks.size(); ++i)
+    for (size_t i = 0; i < _Tracks.size(); ++i)
     {
         auto & Track = _Tracks[i];
-        Track._InitialPort = i <= 16 ? 0 : 1;
+        Track._InitialPort = InitialPorts[i];
         for (const auto & Event : Track)
             if (Event.Type == event_t::NoteOn || Event.Type == event_t::NoteOff)
-                _ChannelMask[0] |= 1ULL << (Event.ChannelNumber + (i <= 16 ? 0 : 16 * PortB));
+                _ChannelMask[0] |= 1ULL << (Event.ChannelNumber + (InitialPorts[i] == 0 ? 0 : 16 * PortB));
     }
 }
 
