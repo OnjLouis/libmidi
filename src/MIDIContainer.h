@@ -101,7 +101,7 @@ class track_t
 public:
     track_t() noexcept : _IsPortSet(false) { }
 
-    track_t(const track_t & track) noexcept : _IsPortSet(track._IsPortSet)
+    track_t(const track_t & track) noexcept : _IsPortSet(track._IsPortSet), _InitialPort(track._InitialPort)
     {
         _Events = track._Events;
     }
@@ -110,6 +110,7 @@ public:
     {
         _Events = track._Events;
         _IsPortSet = track._IsPortSet;
+        _InitialPort = track._InitialPort;
 
         return *this;
     }
@@ -134,6 +135,7 @@ public:
     }
 
     bool IsPortSet() const noexcept { return _IsPortSet; }
+    uint8_t GetInitialPort() const noexcept { return _InitialPort; }
 
 public:
     using events_t = std::vector<event_t>;
@@ -154,8 +156,10 @@ public:
     const event_t & back() const noexcept { return _Events.back(); }
 
 private:
+    friend class container_t;
     std::vector<event_t> _Events;
     bool _IsPortSet;                        // True if the track contains at least 1 MIDI Port event.
+    uint8_t _InitialPort = 0;               // Inferred routing only; never serialized into the SMF.
 };
 
 /// <summary>
@@ -368,6 +372,7 @@ public:
     void Initialize(uint32_t format, uint32_t division);
 
     void AddTrack(const track_t & track);
+    void InferRolandPortLayout();
     void AddEventToTrack(size_t trackIndex, const event_t & event);
 
     // These functions are really only designed to merge and later remove System Exclusive message dumps.

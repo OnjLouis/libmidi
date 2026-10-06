@@ -108,6 +108,7 @@ bool processor_t::ProcessSMF(std::vector<uint8_t> const & data, container_t & co
         }
     }
 
+    container.InferRolandPortLayout();
     return true;
 }
 

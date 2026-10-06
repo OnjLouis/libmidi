@@ -263,7 +263,8 @@ void container_t::AddTrack(const track_t & track)
     _Tracks.push_back(track);
 
     std::string DeviceName;
-    uint8_t PortNumber = 0;
+    uint8_t PortNumber = track.GetInitialPort();
+    NormalizePortNumber(PortNumber);
 
     size_t EventIndex;
 
@@ -355,6 +356,55 @@ void container_t::AddTrack(const track_t & track)
             _EndTimestamps.push_back((uint32_t) 0);
         else
             _EndTimestamps.push_back(track[EventIndex - 1].Time);
+    }
+}
+
+void container_t::InferRolandPortLayout()
+{
+    // The original SC-88 demos omit port metadata, but label a complete A/B layout.
+    // Require the whole layout and a GS reset rather than guessing from track count.
+    if (_Format != 1 || _Tracks.size() != 33)
+        return;
+
+    bool HasGSReset = false;
+    const std::vector<uint8_t> GSReset{0xF0,0x41,0x10,0x42,0x12,0,0,0x7F,0,1,0xF7};
+    for (size_t i = 0; i < _Tracks.size(); ++i)
+    {
+        const auto & Track = _Tracks[i];
+        if (Track.IsPortSet()) return;
+        bool HasName = false;
+        const auto ExpectedName = i == 0 ? std::string() :
+            "Part" + std::string(1, i <= 16 ? 'A' : 'B') + " " + std::to_string((i - 1) % 16 + 1) + "ch.";
+        for (const auto & Event : Track)
+        {
+            if (Event.Type != event_t::Extended)
+            {
+                if (i == 0 || Event.ChannelNumber != (i - 1) % 16) return;
+                continue;
+            }
+            if (Event.Data == GSReset) HasGSReset = true;
+            if (Event.Data.size() < 2 || Event.Data[0] != StatusCode::MetaData) continue;
+            if (Event.Data[1] == MetaDataType::InstrumentName || Event.Data[1] == MetaDataType::DeviceName) return;
+            if (i != 0 && Event.Data[1] == MetaDataType::TrackName)
+            {
+                if (HasName || std::string(Event.Data.begin() + 2, Event.Data.end()) != ExpectedName) return;
+                HasName = true;
+            }
+        }
+        if (i != 0 && !HasName) return;
+    }
+    if (!HasGSReset) return;
+
+    uint8_t PortB = 1;
+    NormalizePortNumber(PortB);
+    _ChannelMask[0] = 0;
+    for (size_t i = 1; i < _Tracks.size(); ++i)
+    {
+        auto & Track = _Tracks[i];
+        Track._InitialPort = i <= 16 ? 0 : 1;
+        for (const auto & Event : Track)
+            if (Event.Type == event_t::NoteOn || Event.Type == event_t::NoteOff)
+                _ChannelMask[0] |= 1ULL << (Event.ChannelNumber + (i <= 16 ? 0 : 16 * PortB));
     }
 }
 
@@ -479,6 +529,11 @@ void container_t::SerializeAsStream(size_t subSongIndex, std::vector<message_t> 
     std::vector<std::size_t> TrackPositions(TrackCount, 0);
     std::vector<uint8_t> PortNumbers(TrackCount, 0);
     std::vector<std::string> DeviceNames(TrackCount);
+    for (size_t i = 0; i < TrackCount; ++i)
+    {
+        PortNumbers[i] = _Tracks[i].GetInitialPort();
+        NormalizePortNumber(PortNumbers[i]);
+    }
 
     bool CleanEMIDI = (cleanFlags & CleanFlagEMIDI) == CleanFlagEMIDI;
     bool CleanInstruments = (cleanFlags & CleanFlagInstruments) == CleanFlagInstruments;

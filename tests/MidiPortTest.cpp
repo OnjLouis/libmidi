@@ -95,6 +95,46 @@ void TestUnrelatedMetadata()
         Require(ports == std::vector<uint8_t>({0}), "Unrelated or malformed metadata changed the port");
     }
 }
+void TestRolandLayout(int variant = 0)
+{
+    std::vector<bytes_t> tracks{{0,0xF0,10,0x41,0x10,0x42,0x12,0,0,0x7F,0,1,0xF7,0,0xFF,0x2F,0}};
+    if (variant == 4) tracks[0] = {0,0xFF,0x2F,0};
+    for (unsigned part = 0; part < 32; ++part)
+    {
+        std::string name = "Part" + std::string(1, part < 16 ? 'A' : 'B') + " " + std::to_string(part % 16 + 1) + "ch.";
+        if (variant == 1 && part == 31) name = "Unrelated track";
+        bytes_t track;
+        if (variant == 2 && part == 20) track.insert(track.end(), {0,0xFF,0x21,1,0});
+        track.insert(track.end(), {0,0xFF,3,static_cast<uint8_t>(name.size())});
+        track.insert(track.end(), name.begin(), name.end());
+        if (variant == 5 && part == 20) track.insert(track.end(), {0,0xFF,9,1,'A'});
+        const auto channel = static_cast<uint8_t>(variant == 3 && part == 31 ? 0 : part % 16);
+        track.insert(track.end(), {0,static_cast<uint8_t>(0xC0|channel),30,
+            0,static_cast<uint8_t>(0xB0|channel),7,90,0,static_cast<uint8_t>(0xE0|channel),0,65,
+            0,static_cast<uint8_t>(0x90|channel),60,100,1,60,0,0,0xFF,0x2F,0});
+        tracks.push_back(track);
+    }
+    const auto file = MakeSMF(tracks);
+    midi::container_t container; midi::sysex_table_t table; std::vector<uint8_t> ports;
+    const auto stream = Parse(file, container, table, ports);
+    const unsigned expected = variant == 0 ? 2 : 1;
+    for (size_t i = 0; i < container.GetTracks().size(); ++i)
+        Require(container.GetTracks()[i].GetInitialPort() == (variant == 0 && i > 16 ? 1 : 0),
+            "Roland inference overrode explicit or ambiguous routing");
+    if (variant != 5)
+    {
+        Require(ports.size() == expected, "Roland labelled layout routing/explicit priority is incorrect");
+        Require(container.GetChannelCount(0) == expected * 16, "Roland channel metadata is incorrect");
+    }
+    if (variant == 0)
+    {
+        for (size_t i = 1; i < stream.size(); ++i)
+            Require((stream[i].Data >> 24) == (i <= 128 ? (i - 1) / 64 : (i - 129) / 16),
+                "Roland setup/note messages changed port incorrectly");
+    }
+    bytes_t roundtrip; container.SerializeAsSMF(roundtrip);
+    Require(roundtrip == file, "Inferred ports were written into the original MIDI");
+}
 }
 
 int main(int argc, char ** argv)
@@ -120,6 +160,7 @@ int main(int argc, char ** argv)
             return 0;
         }
         TestPorts(true); TestPorts(false); TestChangesAndSysEx(); TestUnrelatedMetadata();
+        for (int variant = 0; variant < 6; ++variant) TestRolandLayout(variant);
         std::cout << "MIDI port regression tests passed\n";
         return 0;
     }
