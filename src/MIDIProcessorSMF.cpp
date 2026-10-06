@@ -327,8 +327,9 @@ bool processor_t::ProcessSMFTrack(std::vector<uint8_t>::const_iterator & data, s
                     std::copy(data, data + Size, Temp.begin() + 2);
                     data += Size;
 
-                    if ((MetaDataType != MetaDataType::MIDIPort) || ((MetaDataType == MetaDataType::MIDIPort) && Track.IsPortSet()))
-                        Track.AddEvent(event_t(RunningTime, event_t::Extended, 0, Temp.data(), (size_t) (Size + 2)));
+                    const event_t Event(RunningTime, event_t::Extended, 0, Temp.data(), (size_t) (Size + 2));
+                    if (!Event.IsPort() || Track.IsPortSet())
+                        Track.AddEvent(Event);
                     else
                         Track.AddEventToStart(event_t(0, event_t::Extended, 0, Temp.data(), (size_t) (Size + 2)));
                 }

@@ -67,7 +67,29 @@ struct event_t
 
     bool IsSetTempo() const noexcept    { return (Type == event_t::Extended) && (Data.size() >= 5) && (Data[0] == StatusCode::MetaData) && (Data[1] == MetaDataType::SetTempo); }
     bool IsMarker() const noexcept      { return (Type == event_t::Extended) && (Data.size() >= 9) && (Data[0] == StatusCode::MetaData) && (Data[1] == MetaDataType::Marker); }
-    bool IsPort() const noexcept        { return (Type == event_t::Extended) && (Data.size() >= 2) && (Data[0] == StatusCode::MetaData) && (Data[1] == MetaDataType::MIDIPort); }
+    bool IsPort() const noexcept        { uint8_t port; return GetPortNumber(port); }
+    bool GetPortNumber(uint8_t & port) const noexcept
+    {
+        if (Type != event_t::Extended || Data.size() < 3 || Data[0] != StatusCode::MetaData)
+            return false;
+
+        if (Data[1] == MetaDataType::MIDIPort)
+        {
+            port = Data[2];
+            return true;
+        }
+
+        // Yamaha sequencers store the output port as FF 7F 04 43 00 01 pp.
+        // Keep the original metadata; share its routing meaning with FF 21.
+        constexpr uint8_t YamahaManufacturerID = 0x43;
+        if (Data.size() == 6 && Data[1] == MetaDataType::SequencerSpecific &&
+            Data[2] == YamahaManufacturerID && Data[3] == 0 && Data[4] == 1 && Data[5] < 0x80)
+        {
+            port = Data[5];
+            return true;
+        }
+        return false;
+    }
     bool IsEndOfTrack() const noexcept  { return (Type == event_t::Extended) && (Data.size() >= 2) && (Data[0] == StatusCode::MetaData) && (Data[1] == MetaDataType::EndOfTrack); }
 };
 
@@ -79,7 +101,7 @@ class track_t
 public:
     track_t() noexcept : _IsPortSet(false) { }
 
-    track_t(const track_t & track) noexcept : _IsPortSet(false)
+    track_t(const track_t & track) noexcept : _IsPortSet(track._IsPortSet)
     {
         _Events = track._Events;
     }
@@ -87,6 +109,7 @@ public:
     track_t & operator=(const track_t & track)
     {
         _Events = track._Events;
+        _IsPortSet = track._IsPortSet;
 
         return *this;
     }
@@ -477,7 +500,7 @@ private:
 
     uint32_t _ExtraPercussionChannel;
 
-    const size_t MaxChannels = 48;
+    const size_t MaxChannels = 64;
 
     std::vector<uint64_t> _ChannelMask;
     std::vector<tempo_map_t> _TempoMaps;

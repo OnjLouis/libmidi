@@ -290,16 +290,14 @@ void container_t::AddTrack(const track_t & track)
             else
             if ((Event.Data.size() >= 3) && (Event.Data[0] == StatusCode::MetaData))
             {
-                if (Event.Data[1] == MetaDataType::InstrumentName || Event.Data[1] == MetaDataType::DeviceName)
+                if (!track.IsPortSet() && (Event.Data[1] == MetaDataType::InstrumentName || Event.Data[1] == MetaDataType::DeviceName))
                 {
                     DeviceName.assign(Event.Data.begin() + 2, Event.Data.end());
                     std::transform(DeviceName.begin(), DeviceName.end(), DeviceName.begin(), ::tolower);
                 }
                 else
-                if (Event.Data[1] == MetaDataType::MIDIPort)
+                if (Event.GetPortNumber(PortNumber))
                 {
-                    PortNumber = Event.Data[2];
-
                     NormalizePortNumber(PortNumber);
                     DeviceName.clear();
                 }
@@ -638,16 +636,15 @@ void container_t::SerializeAsStream(size_t subSongIndex, std::vector<message_t> 
                 else
                 if ((DataSize >= 3) && (Event.Data[0] == StatusCode::MetaData))
                 {
-                    if (Event.Data[1] == MetaDataType::InstrumentName || Event.Data[1] == MetaDataType::DeviceName)
+                    if (!_Tracks[SelectedTrack].IsPortSet() && (Event.Data[1] == MetaDataType::InstrumentName || Event.Data[1] == MetaDataType::DeviceName))
                     {
                         DeviceNames[SelectedTrack].assign(Event.Data.begin() + 2, Event.Data.end());
 
                         std::transform(DeviceNames[SelectedTrack].begin(), DeviceNames[SelectedTrack].end(), DeviceNames[SelectedTrack].begin(), ::tolower);
                     }
                     else
-                    if (Event.Data[1] == MetaDataType::MIDIPort)
+                    if (Event.GetPortNumber(PortNumbers[SelectedTrack]))
                     {
-                        PortNumbers[SelectedTrack] = Event.Data[2];
                         DeviceNames[SelectedTrack].clear();
 
                         NormalizePortNumber(PortNumbers[SelectedTrack]);
